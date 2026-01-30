@@ -83,6 +83,9 @@ class Agent:
         return response
 
     async def run(self, message: Message, updater: TaskUpdater) -> None:
+        # Reset messenger state for isolation
+        self.messenger.reset()
+        
         input_text = get_message_text(message)
 
         try:

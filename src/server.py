@@ -32,8 +32,8 @@ def main():
     )
 
     agent_card = AgentCard(
-        name="",
-        description="",
+        name="RIT Classification Benchmark",
+        description="Evaluates purple agents on their ability to detect Rule Interaction Threats (RITs) in openHAB automation rules",
         url=args.card_url or f"http://{args.host}:{args.port}/",
         version='1.0.0',
         default_input_modes=['text'],
