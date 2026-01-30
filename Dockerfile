@@ -5,6 +5,8 @@ USER agent
 WORKDIR /home/agent
 
 COPY pyproject.toml uv.lock README.md ./
+COPY prompts/ /home/agent/prompts/
+COPY mutation_data/ /home/agent/mutation_data/
 COPY src src
 
 RUN \
