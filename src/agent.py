@@ -179,6 +179,8 @@ class Agent:
             },
         }
 
+        print(f"DEBUG: About to create artifact. Accuracy: {accuracy}, Total: {total}")
+
         await updater.add_artifact(
             parts=[
                 Part(root=TextPart(kind="text", text=f"Accuracy: {accuracy:.4f} ({correct}/{total})")),
@@ -186,6 +188,9 @@ class Agent:
             ],
             name="Result",
         )
+
+        print(f"DEBUG: Artifact created successfully")
+        print(f"DEBUG: Terminal state reached: {updater._terminal_state_reached}")
 
         await updater.update_status(
             TaskState.completed, new_agent_text_message("Done.")

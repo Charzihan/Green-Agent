@@ -1,5 +1,15 @@
+"""
+Updated Mock Purple Agent for Refactored Green Agent
+
+This mock purple agent simulates a real purple agent that:
+1. Receives a prompt + ruleset from the green agent
+2. Returns a single 3-letter label
+3. Handles its own voting logic internally (if any)
+
+For testing purposes, it returns deterministic labels based on markers in the ruleset.
+"""
+
 import argparse
-import asyncio
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, Mount
@@ -10,12 +20,13 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from a2a.server.tasks import TaskUpdater
-from a2a.types import Message, TaskState, Task, InvalidRequestError, UnsupportedOperationError
+from a2a.types import Message, TaskState, InvalidRequestError, UnsupportedOperationError
 from a2a.utils import get_message_text, new_agent_text_message, new_task
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.utils.errors import ServerError
 
+# Global counter for debugging
 CALL_COUNT = 0
 
 TERMINAL_STATES = {
@@ -26,45 +37,36 @@ TERMINAL_STATES = {
 }
 
 
-def _detect_variant(full_text: str) -> int:
-    """
-      PROMPT + "\n\n===== INPUT START =====\n" + RULESET + "\n===== INPUT END ====="
-    """
-    prefix = full_text.split("===== INPUT START =====")[0]
-    n = prefix.count('rule "')
-    # In the prompt files: ~1 (0-shot), ~13 (1-shot), ~25 (2-shot) before input is appended
-    if n < 5:
-        return 0
-    if n < 20:
-        return 1
-    return 2
-
-
 class MockPurpleAgent:
-    """Simple agent logic - just the run method"""
+    """
+    Mock purple agent that returns deterministic labels for testing.
+    
+    Now expects to be called ONCE per evaluation (green agent no longer does voting).
+    Purple agent would handle its own 0/1/2-shot prompting and voting internally.
+    """
     async def run(self, message: Message, updater: TaskUpdater) -> None:
         global CALL_COUNT
         CALL_COUNT += 1
 
         text = get_message_text(message) or ""
-        variant = _detect_variant(text)
 
-        # Choose a deterministic response pattern based on a marker in the input text.
-        # The test will include one of these markers inside the ruleset.
-        if "TESTCASE=TIE" in text:
-            # 0 -> WAC, 1 -> SAC, 2 -> WTC  (all different, tie-break should pick 2-shot => WTC)
-            labels = ["WAC", "SAC", "WTC"]
+        # Detect test case from markers in the ruleset
+        # These markers are embedded in the test CSV files
+        if "TESTCASE=MAJORITY" in text:
+            # Simulate: purple internally runs 3 variants, gets SAC, SAC, WAC → majority SAC
+            label = "SAC"
+        elif "TESTCASE=TIE" in text:
+            # Simulate: purple internally runs 3 variants, gets WAC, SAC, WTC → tie-break WTC (2-shot wins)
+            label = "WTC"
         else:
-            # 0 -> SAC, 1 -> SAC, 2 -> WAC  (majority => SAC)
-            labels = ["SAC", "SAC", "WAC"]
-
-        label = labels[variant]
+            # Default fallback for unknown test cases
+            label = "SAC"
 
         await updater.update_status(TaskState.completed, new_agent_text_message(label))
 
 
 class MockPurpleExecutor(AgentExecutor):
-    """Executor wrapper - handles the execute interface"""
+    """Executor wrapper for A2A protocol compliance"""
     def __init__(self):
         self.agents: dict[str, MockPurpleAgent] = {}
 
@@ -104,11 +106,14 @@ class MockPurpleExecutor(AgentExecutor):
         raise ServerError(error=UnsupportedOperationError())
 
 
+# Debug endpoints
 async def debug_calls(request):
+    """Get number of times purple agent was called"""
     return JSONResponse({"call_count": CALL_COUNT})
 
 
 async def debug_reset(request):
+    """Reset call counter"""
     global CALL_COUNT
     CALL_COUNT = 0
     return JSONResponse({"ok": True})
@@ -116,18 +121,21 @@ async def debug_reset(request):
 
 def build_app(host: str, port: int, card_url: str | None):
     skill = AgentSkill(
-        id="mock_label",
-        name="Mock Labeler",
-        description="Returns deterministic 3-letter label for testing green agent.",
-        tags=["test"],
-        examples=["Return SAC"],
+        id="mock_rit_classifier",
+        name="Mock RIT Classifier",
+        description="Returns deterministic 3-letter RIT label for testing. Simulates internal voting logic.",
+        tags=["test", "RIT", "classification"],
+        examples=[
+            "Classify this openHAB ruleset",
+            "Detect RIT threats in these rules"
+        ],
     )
 
     agent_card = AgentCard(
-        name="Mock Purple Agent",
-        description="Mock purple agent for local tests.",
+        name="Mock Purple Agent (Refactored)",
+        description="Mock purple agent that simulates voting logic internally. Returns single label per request.",
         url=card_url or f"http://{host}:{port}/",
-        version="1.0.0",
+        version="2.0.0",  # Bumped to indicate new single-call interface
         default_input_modes=["text"],
         default_output_modes=["text"],
         capabilities=AgentCapabilities(streaming=True),
@@ -141,7 +149,7 @@ def build_app(host: str, port: int, card_url: str | None):
 
     a2a_server = A2AStarletteApplication(agent_card=agent_card, http_handler=request_handler).build()
 
-    # Mount A2A server at "/" and add debug endpoints.
+    # Mount A2A server at "/" and add debug endpoints
     return Starlette(
         routes=[
             Route("/debug/calls", debug_calls, methods=["GET"]),
@@ -152,11 +160,16 @@ def build_app(host: str, port: int, card_url: str | None):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=9101)
-    parser.add_argument("--card-url", type=str, default=None)
+    parser = argparse.ArgumentParser(description="Mock Purple Agent for testing Green Agent")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind")
+    parser.add_argument("--port", type=int, default=9101, help="Port to bind")
+    parser.add_argument("--card-url", type=str, default=None, help="URL for agent card")
     args = parser.parse_args()
+
+    print(f"Starting Mock Purple Agent on {args.host}:{args.port}")
+    print(f"Debug endpoints:")
+    print(f"  GET  http://{args.host}:{args.port}/debug/calls")
+    print(f"  POST http://{args.host}:{args.port}/debug/reset")
 
     app = build_app(args.host, args.port, args.card_url)
     uvicorn.run(app, host=args.host, port=args.port)
