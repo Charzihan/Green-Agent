@@ -24,11 +24,11 @@ def main():
     # See: https://a2a-protocol.org/latest/tutorials/python/3-agent-skills-and-card/
     
     skill = AgentSkill(
-        id="",
-        name="",
-        description="",
-        tags=[],
-        examples=[]
+        id="RIT_evaluate",
+        name="Evaulate RIT results",
+        description="Evaulate RIT results provided by purple agent",
+        tags=["RITs"],
+        examples=["Evaluate the RIT results provided by purple agent"]
     )
 
     agent_card = AgentCard(

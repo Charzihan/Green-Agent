@@ -42,20 +42,23 @@ class Executor(AgentExecutor):
             await event_queue.enqueue_event(task)
 
         context_id = task.context_id
-        agent = self.agents.get(context_id)
-        if not agent:
-            agent = Agent()
-            self.agents[context_id] = agent
-
         updater = TaskUpdater(event_queue, task.id, context_id)
-
+        
         await updater.start_work()
         try:
+            # Move agent creation inside the try block!
+            agent = self.agents.get(context_id)
+            if not agent:
+                agent = Agent()
+                self.agents[context_id] = agent
+            
             await agent.run(msg, updater)
             if not updater._terminal_state_reached:
                 await updater.complete()
         except Exception as e:
             print(f"Task failed with agent error: {e}")
+            import traceback
+            traceback.print_exc()  # This will help you see the actual error
             await updater.failed(new_agent_text_message(f"Agent error: {e}", context_id=context_id, task_id=task.id))
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
