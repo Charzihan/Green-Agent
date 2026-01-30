@@ -2,7 +2,7 @@
 Functional tests for refactored green agent.
 
 These tests verify that:
-1. Green agent correctly delegates to purple agent
+1. Green agent correctly delegates to purple agent with override data_path tmp_path
 2. Purple agent returns single label (handles voting internally)
 3. Accuracy calculation works correctly
 4. Only 1 call to purple per row (not 3)
@@ -188,11 +188,11 @@ async def test_green_multiple_rows(agent, mock_purple, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_green_accuracy_calculation(agent, mock_purple, mutation_data):
+async def test_green_accuracy_calculation(agent, mock_purple, tmp_path):
     """
     Test that green agent correctly calculates accuracy.
     """
-    csv_path = mutation_data / "mutated_dataset.csv"
+    csv_path = tmp_path / "mixed_results.csv"
     csv_path.write_text(
         "ruleset,trad_result\n"
         # Correct (purple returns SAC for MAJORITY)
@@ -224,11 +224,11 @@ async def test_green_accuracy_calculation(agent, mock_purple, mutation_data):
 
 
 @pytest.mark.asyncio
-async def test_green_label_stats(agent, mock_purple, mutation_data):
+async def test_green_label_stats(agent, mock_purple, tmp_path):
     """
     Test that green agent correctly tracks label statistics.
     """
-    csv_path = mutation_data / "mutated_dataset.csv"
+    csv_path = tmp_path / "label_stats.csv"
     csv_path.write_text(
         "ruleset,trad_result\n"
         "\"TESTCASE=MAJORITY\\nrule \\\"A\\\"\",SAC\n"

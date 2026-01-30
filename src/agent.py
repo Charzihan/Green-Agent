@@ -52,7 +52,7 @@ class Agent:
         # Package these files inside your green agent repo image
         self.repo_root = Path(__file__).resolve().parents[1]
         self.default_dataset_path = self.repo_root / "mutation_data" / "mutated_dataset.csv"
-        self.default_prompt_path = self.repo_root / "prompts" / "prompt_3letter_0shot_NOmultiple.txt"
+        self.default_prompt_path = self.repo_root / "prompts" / "prompt_3letter_2shot_NOmultiple.txt"
 
         # Load single prompt at startup
         self.prompt = self.default_prompt_path.read_text(encoding="utf-8")
