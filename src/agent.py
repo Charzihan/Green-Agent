@@ -426,7 +426,7 @@ class Agent:
         dataset_path = Path(cfg.get("dataset_path", self.default_dataset_path))
         ruleset_col = cfg.get("ruleset_column", "ruleset")
         gold_col = cfg.get("gold_column", "trad_result")
-        max_rows = int(cfg.get("max_rows", 50))
+        max_rows = int(cfg.get("max_rows", 10000))
         
         # RIT type filter - only evaluate rows with this specific label
         # If None or empty, evaluate all RIT types
