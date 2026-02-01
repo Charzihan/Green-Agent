@@ -23,6 +23,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install age
+        run: |
+          curl -Lo /tmp/age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.2.0/age-v1.2.0-linux-amd64.tar.gz
+          tar -xzf /tmp/age.tar.gz -C /tmp
+          sudo mv /tmp/age/age /usr/local/bin/
+          age --version
+
+      - name: Decrypt dataset
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          echo "$AGE_SECRET_KEY" > /tmp/key.txt
+          age --decrypt -i /tmp/key.txt -o mutation_data/mutated_dataset.csv mutation_data/mutated_dataset.csv.age
+          rm /tmp/key.txt
+          echo "Dataset decrypted successfully"
+          ls -la mutation_data/
+
       - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v5

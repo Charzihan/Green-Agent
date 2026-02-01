@@ -9,11 +9,6 @@ from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-import os
-import subprocess
-import tempfile
-from contextlib import contextmanager
-from typing import Generator
 
 from pydantic import BaseModel, HttpUrl, ValidationError
 
@@ -213,115 +208,6 @@ def _find_repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-# =============================================================================
-# Dataset Encryption Support
-# =============================================================================
-
-class DatasetDecryptionError(Exception):
-    """Raised when dataset decryption fails."""
-    pass
-
-
-def _get_dataset_path(repo_root: Path) -> tuple[Path, bool]:
-    """
-    Determine the dataset path and whether decryption is needed.
-    
-    Returns:
-        (path, needs_decryption): The path to use and whether it's encrypted
-    
-    Priority:
-        1. Plaintext file (for local development)
-        2. Encrypted file (for production)
-    """
-    plaintext = repo_root / "mutation_data" / "mutated_dataset.csv"
-    encrypted = repo_root / "mutation_data" / "mutated_dataset.csv.age"
-    
-    if plaintext.exists():
-        # Local dev mode - plaintext available
-        return plaintext, False
-    elif encrypted.exists():
-        # Production mode - need to decrypt
-        return encrypted, True
-    else:
-        raise DatasetDecryptionError(
-            f"No dataset found. Checked:\n"
-            f"  - {plaintext}\n"
-            f"  - {encrypted}"
-        )
-
-
-@contextmanager
-def _decrypt_dataset(encrypted_path: Path) -> Generator[Path, None, None]:
-    """
-    Context manager that decrypts a dataset to a temp file for use.
-    
-    Think of it like a secure document room:
-    - Check out the document (decrypt)
-    - Work with it
-    - Document is shredded when you leave (cleanup)
-    """
-    if not encrypted_path.exists():
-        raise DatasetDecryptionError(f"Encrypted dataset not found: {encrypted_path}")
-    
-    # Get the decryption key from environment
-    age_identity = os.environ.get("AGE_SECRET_KEY")
-    if not age_identity:
-        raise DatasetDecryptionError(
-            "AGE_SECRET_KEY environment variable not set. "
-            "This secret should only be available to the green agent."
-        )
-    
-    # Write identity to temp file (age CLI needs a file path)
-    key_fd, key_path_str = tempfile.mkstemp(suffix='.key')
-    key_path = Path(key_path_str)
-    
-    # Create temp file for decrypted output
-    decrypted_fd, decrypted_path_str = tempfile.mkstemp(suffix='.csv')
-    decrypted_path = Path(decrypted_path_str)
-    
-    try:
-        # Write key to temp file
-        with os.fdopen(key_fd, 'w') as f:
-            f.write(age_identity)
-        
-        os.close(decrypted_fd)  # Close fd, let age write to the path
-        
-        # Decrypt using age CLI
-        result = subprocess.run(
-            [
-                "age", "--decrypt",
-                "--identity", str(key_path),
-                "--output", str(decrypted_path),
-                str(encrypted_path)
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30  # Should be fast for small files
-        )
-        
-        if result.returncode != 0:
-            raise DatasetDecryptionError(
-                f"age decryption failed: {result.stderr}"
-            )
-        
-        print(f"DEBUG: Decrypted dataset to {decrypted_path}")
-        yield decrypted_path
-        
-    except subprocess.TimeoutExpired:
-        raise DatasetDecryptionError("Decryption timed out")
-    except FileNotFoundError:
-        raise DatasetDecryptionError(
-            "age CLI not found. Ensure age is installed in the container."
-        )
-    finally:
-        # Always clean up sensitive files
-        if key_path.exists():
-            key_path.unlink()
-        if decrypted_path.exists():
-            decrypted_path.unlink()
-            print(f"DEBUG: Cleaned up decrypted dataset")
-
-
 class Agent:
     """
     Green agent for RIT classification benchmark.
@@ -332,7 +218,6 @@ class Agent:
     3. Retry logic - transient failures get a second chance
     4. Circuit breaker - stop early if purple agent is clearly dead
     5. Partial results - ALWAYS return what we have, even on failure
-    6. Dataset encryption - protected benchmark data, decrypted at runtime
     """
     
     required_roles: list[str] = ["agent"]
@@ -349,18 +234,11 @@ class Agent:
         
         # Path resolution
         self.repo_root = _find_repo_root()
+        self.default_dataset_path = self.repo_root / "mutation_data" / "mutated_dataset.csv"
         self.default_prompt_path = self.repo_root / "prompts" / "prompt_3letter_2shot_NOmultiple.txt"
-        
-        # Detect dataset location and encryption status
-        try:
-            self._dataset_path, self._needs_decryption = _get_dataset_path(self.repo_root)
-            print(f"DEBUG: Repo root: {self.repo_root}")
-            print(f"DEBUG: Dataset path: {self._dataset_path}")
-            print(f"DEBUG: Needs decryption: {self._needs_decryption}")
-        except DatasetDecryptionError as e:
-            print(f"WARNING: Dataset detection failed: {e}")
-            self._dataset_path = self.repo_root / "mutation_data" / "mutated_dataset.csv"
-            self._needs_decryption = False
+
+        print(f"DEBUG: Repo root: {self.repo_root}")
+        print(f"DEBUG: Dataset exists: {self.default_dataset_path.exists()}")
 
         # Load prompt
         if self.default_prompt_path.exists():
@@ -545,17 +423,7 @@ class Agent:
         
         # Extract config with defaults
         cfg = request.config or {}
-        
-        # Handle dataset path - use config override or detect automatically
-        if "dataset_path" in cfg:
-            # Explicit path provided - use it directly (for testing)
-            dataset_path = Path(cfg["dataset_path"])
-            needs_decryption = False
-        else:
-            # Use auto-detected path
-            dataset_path = self._dataset_path
-            needs_decryption = self._needs_decryption
-        
+        dataset_path = Path(cfg.get("dataset_path", self.default_dataset_path))
         ruleset_col = cfg.get("ruleset_column", "ruleset")
         gold_col = cfg.get("gold_column", "trad_result")
         max_rows = int(cfg.get("max_rows", 10000))
@@ -581,7 +449,6 @@ class Agent:
         
         config_used = {
             "dataset_path": str(dataset_path),
-            "dataset_encrypted": needs_decryption,
             "ruleset_column": ruleset_col,
             "gold_column": gold_col,
             "max_rows": max_rows,
@@ -595,50 +462,6 @@ class Agent:
         # Initialize state tracker
         state = AssessmentState()
         
-        # === HANDLE ENCRYPTED DATASET ===
-        if needs_decryption:
-            try:
-                # Decrypt and process within context manager
-                with _decrypt_dataset(dataset_path) as decrypted_path:
-                    await self._run_assessment(
-                        decrypted_path, purple_url, updater, state,
-                        config_used, ruleset_col, gold_col, max_rows,
-                        rit_filter, row_timeout, max_retries,
-                        circuit_threshold, skip_health_check
-                    )
-            except DatasetDecryptionError as e:
-                await updater.failed(
-                    new_agent_text_message(f"Dataset security error: {e}")
-                )
-                return
-        else:
-            # Direct access to plaintext dataset
-            await self._run_assessment(
-                dataset_path, purple_url, updater, state,
-                config_used, ruleset_col, gold_col, max_rows,
-                rit_filter, row_timeout, max_retries,
-                circuit_threshold, skip_health_check
-            )
-
-    async def _run_assessment(
-        self,
-        dataset_path: Path,
-        purple_url: str,
-        updater: TaskUpdater,
-        state: AssessmentState,
-        config_used: dict,
-        ruleset_col: str,
-        gold_col: str,
-        max_rows: int,
-        rit_filter: Optional[str],
-        row_timeout: int,
-        max_retries: int,
-        circuit_threshold: int,
-        skip_health_check: bool,
-    ) -> None:
-        """
-        Core assessment logic - extracted to work with both plaintext and decrypted datasets.
-        """
         # Verify dataset exists
         if not dataset_path.exists():
             await updater.failed(
